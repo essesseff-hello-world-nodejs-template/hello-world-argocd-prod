@@ -10,6 +10,11 @@ metadata:
   annotations:
     essesseff.io/repository-id: "{{REPOSITORY_ID}}"
     essesseff.io/environment: "prod"
+    notifications.argoproj.io/subscribe.on-sync-started.webhook: webhook-hello-world
+    notifications.argoproj.io/subscribe.on-sync-succeeded.webhook: webhook-hello-world
+    notifications.argoproj.io/subscribe.on-sync-failed.webhook: webhook-hello-world
+    notifications.argoproj.io/subscribe.on-deployed.webhook: webhook-hello-world
+    notifications.argoproj.io/subscribe.on-health-degraded.webhook: webhook-hello-world
 spec:
   project: default
   source:
