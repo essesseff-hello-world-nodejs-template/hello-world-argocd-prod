@@ -147,4 +147,4 @@ echo "=============================================="
 echo "✅ Argo CD for hello-world PROD setup complete!"
 echo "=============================================="
 echo ""
-echo "!!!REMEMBER TO DELETE YOUR SECRETS YAMLS -- DO *NOT* COMMIT THEM TO GITHUB!!!
+echo "!!!REMEMBER TO DELETE YOUR SECRETS YAMLS -- DO *NOT* COMMIT THEM TO GITHUB!!!"
