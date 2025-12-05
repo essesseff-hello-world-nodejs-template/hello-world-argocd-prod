@@ -26,8 +26,8 @@ data:
         method: POST
         body: |
           {
-            "app_secret": "$app-secret-hello-world",
-            "repository_id": "{{index .app.metadata.annotations \"essesseff.io/repository-id\"}}",
+            "app_secret": "$app-secret-{appName}",
+            "repository_id": "{{index .app.metadata.annotations `essesseff.io/repository-id`}}",
             "event_type": "{{.app.status.operationState.phase}}",
             "application_name": "{{.app.metadata.name}}",
             "app": "{{.app.metadata.labels.app}}",
