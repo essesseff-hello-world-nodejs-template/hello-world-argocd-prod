@@ -33,7 +33,14 @@ hello-world-argocd-prod/
 
 ## Quick Start
 
-### Deploy to Argo CD
+### Deploy/Configure Argo CD on the Environment-specific Kubernetes Cluster (if not done already)
+
+1. **Run Argo CD cluster setup script**:
+```bash
+   ./setup-argocd-cluster.sh
+   ```
+   
+### Deploy hello-world-prod essesseff App to Argo CD
 
 1. **Configure Argo CD repository access**:
    
@@ -52,7 +59,7 @@ hello-world-argocd-prod/
 3. **Configure Argo CD notifications secrets**:
 
    Request the notifications-secret.yaml file contents from the essesseff UX for hello-world here:
-   https://www.essesseff.com/home/YOUR_TEAM/apps/hello-world
+   https://www.essesseff.com/home/YOUR_essesseff_TEAM_ACCOUNT/apps/hello-world/settings
 
    Save the contents to ./notifications-secret.yaml 
 
