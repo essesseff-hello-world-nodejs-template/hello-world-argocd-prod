@@ -5,7 +5,7 @@
 # Setup Argo CD for hello-world prod
 
 # This script sets up Argo CD notifications for an essesseff app
-# Template variables hello-world, essesseff-hello-world-go-template, {{REPOSITORY_ID}}, etc.) 
+# Template variables (hello-world, essesseff-hello-world-go-template, {{REPOSITORY_ID}}, etc.) 
 # are replaced when apps are created from templates
 
 set -e
@@ -109,6 +109,37 @@ kubectl apply -f notifications-secret.yaml
 # This is safe because we use repository ID-based naming (webhook-{REPOSITORY_ID})
 # which ensures unique keys per app/environment
 echo "📝 Patching notification configmap (merging with existing entries)..."
+
+# Kubernetes objects (including ConfigMaps) have a practical size limit (~1MiB) due to etcd.
+CONFIGMAP_SIZE_LIMIT_BYTES=$((1024 * 1024))          # 1 MiB
+SUBSCRIPTIONS_SAFETY_BUFFER_BYTES=$((128 * 1024))    # buffer for other ConfigMap keys/metadata
+MAX_SUBSCRIPTIONS_BYTES=$((CONFIGMAP_SIZE_LIMIT_BYTES - SUBSCRIPTIONS_SAFETY_BUFFER_BYTES))
+
+# Best-effort: estimate final ConfigMap size after merging notifications-configmap.yaml (server-side dry-run)
+echo "  🔎 Estimating ConfigMap size after merge (server-side dry-run)..."
+if DRY_RUN_MERGE_CM_JSON=$(kubectl patch configmap argocd-notifications-cm -n argocd \
+  --type merge \
+  --patch-file notifications-configmap.yaml \
+  --dry-run=server \
+  -o json 2>/dev/null); then
+  DRY_RUN_MERGE_CM_BYTES=$(printf '%s' "$DRY_RUN_MERGE_CM_JSON" | wc -c | tr -d ' ')
+  echo "  ℹ️  Estimated ConfigMap JSON size after merge: ${DRY_RUN_MERGE_CM_BYTES} bytes (limit ~${CONFIGMAP_SIZE_LIMIT_BYTES})"
+
+  if [ "$DRY_RUN_MERGE_CM_BYTES" -gt "$CONFIGMAP_SIZE_LIMIT_BYTES" ]; then
+    echo ""
+    echo "❌ ERROR: ConfigMap would exceed the Kubernetes/etcd object size limit after merge."
+    echo "   Estimated size: ${DRY_RUN_MERGE_CM_BYTES} bytes"
+    echo "   Limit:          ${CONFIGMAP_SIZE_LIMIT_BYTES} bytes"
+    echo ""
+    echo "   Refusing to patch argocd-notifications-cm with notifications-configmap.yaml."
+    echo "   Consider reducing the number/size of ConfigMap entries or splitting configuration."
+    exit 1
+  fi
+else
+  echo "  ⚠️  Could not run dry-run size estimation (insufficient permissions or older cluster)."
+  echo "     Proceeding without merge-size validation."
+fi
+
 kubectl patch configmap argocd-notifications-cm -n argocd \
   --type merge \
   --patch-file notifications-configmap.yaml
@@ -119,6 +150,8 @@ WEBHOOK_NAME="webhook-${REPOSITORY_ID}"
 
 # Get current subscriptions field
 CURRENT_SUBSCRIPTIONS=$(kubectl get configmap argocd-notifications-cm -n argocd -o jsonpath='{.data.subscriptions}' 2>/dev/null || echo "")
+CURRENT_SUBSCRIPTIONS_BYTES=$(printf '%s' "$CURRENT_SUBSCRIPTIONS" | wc -c | tr -d ' ')
+echo "  ℹ️  Current subscriptions size: ${CURRENT_SUBSCRIPTIONS_BYTES} bytes"
 
 # Check if subscription for this webhook already exists
 if echo "$CURRENT_SUBSCRIPTIONS" | grep -q "webhook-${REPOSITORY_ID}"; then
@@ -145,6 +178,21 @@ else
 ${NEW_SUBSCRIPTION}"
   fi
 
+  MERGED_SUBSCRIPTIONS_BYTES=$(printf '%s' "$MERGED_SUBSCRIPTIONS" | wc -c | tr -d ' ')
+  echo "  ℹ️  New subscriptions size (after append): ${MERGED_SUBSCRIPTIONS_BYTES} bytes"
+
+  if [ "$MERGED_SUBSCRIPTIONS_BYTES" -gt "$MAX_SUBSCRIPTIONS_BYTES" ]; then
+    echo ""
+    echo "❌ ERROR: subscriptions value would be too large (${MERGED_SUBSCRIPTIONS_BYTES} bytes)."
+    echo "   - ConfigMap object size limit is approximately ${CONFIGMAP_SIZE_LIMIT_BYTES} bytes (1 MiB)."
+    echo "   - We reserve ${SUBSCRIPTIONS_SAFETY_BUFFER_BYTES} bytes for other ConfigMap keys and metadata."
+    echo "   - Safety limit for subscriptions value is ${MAX_SUBSCRIPTIONS_BYTES} bytes."
+    echo ""
+    echo "   Refusing to patch argocd-notifications-cm.data.subscriptions to avoid exceeding the limit."
+    echo "   Consider reducing per-subscription verbosity or switching to a different subscription storage strategy."
+    exit 1
+  fi
+
   # Create temporary patch file with proper JSON escaping
   TEMP_PATCH=$(mktemp)
   
@@ -169,6 +217,31 @@ ${NEW_SUBSCRIPTION}"
   }
 }
 EOF
+
+  # Best-effort: estimate final ConfigMap size after this patch (server-side dry-run)
+  # This helps catch cases where other keys (service.webhook.* entries, templates, etc.) push us over the object limit.
+  echo "  🔎 Estimating final ConfigMap size after patch (server-side dry-run)..."
+  if DRY_RUN_CM_JSON=$(kubectl patch configmap argocd-notifications-cm -n argocd \
+    --type merge \
+    --patch-file "$TEMP_PATCH" \
+    --dry-run=server \
+    -o json 2>/dev/null); then
+    DRY_RUN_CM_BYTES=$(printf '%s' "$DRY_RUN_CM_JSON" | wc -c | tr -d ' ')
+    echo "  ℹ️  Estimated ConfigMap JSON size after patch: ${DRY_RUN_CM_BYTES} bytes (limit ~${CONFIGMAP_SIZE_LIMIT_BYTES})"
+
+    if [ "$DRY_RUN_CM_BYTES" -gt "$CONFIGMAP_SIZE_LIMIT_BYTES" ]; then
+      echo ""
+      echo "❌ ERROR: ConfigMap would exceed the Kubernetes/etcd object size limit after patch."
+      echo "   Estimated size: ${DRY_RUN_CM_BYTES} bytes"
+      echo "   Limit:          ${CONFIGMAP_SIZE_LIMIT_BYTES} bytes"
+      echo ""
+      echo "   Refusing to patch subscriptions to avoid a failed apply."
+      exit 1
+    fi
+  else
+    echo "  ⚠️  Could not run dry-run size estimation (insufficient permissions or older cluster)."
+    echo "     Proceeding with subscriptions-only size check."
+  fi
 
   # Patch the subscriptions field
   kubectl patch configmap argocd-notifications-cm -n argocd \
